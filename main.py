@@ -14,14 +14,6 @@ variable_parents = {}
 cpts = {}
 
 # Functions
-def cartesian_product(lists):
-    if not lists: return [[]]
-    cp_result = []
-    combinations = cartesian_product(lists[1:])
-    for item in lists[0]:
-        for combination in combinations:
-            cp_result.append([item] + combination)
-    return cp_result
 def parse_network_file(filename):
     variable_names.clear()
     variable_domains.clear()
@@ -58,7 +50,15 @@ def parse_network_file(filename):
             line_index += 1
         else:
             parent_domains = [variable_domains[parent] for parent in parent_variables]
-            parent_combinations = [tuple(combination) for combination in cartesian_product(parent_domains)]
+            parent_combinations = [[]]
+            for domain in parent_domains:
+                new_combinations = []
+                for combination in parent_combinations:
+                    for value in domain:
+                        new_combinations.append(combination + [value])
+                parent_combinations = new_combinations
+            parent_combinations = [tuple(comb) for comb in parent_combinations]
+
             for combination in parent_combinations:
                 probabilities = [float(value) for value in cleaned_lines[line_index].split()]
                 cpts[child_variable][combination] = probabilities
