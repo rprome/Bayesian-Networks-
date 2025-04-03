@@ -1,218 +1,190 @@
-#!/usr/bin/env python3
-import sys, itertools, random
+"""
+Authors:
+    Shafayet Fahim (sfahim@u.rochester.edu)
+    Rizouana Prome (rprome@u.rochester.edu)
+"""
+# Imports
+import sys
+import random
 
-# Global BN storage
-variables_list = []
-var_domains = {}
-parents = {}
-cpt = {}
+# Global variables
+variable_names = []
+variable_domains = {}
+variable_parents = {}
+cpts = {}
 
+# Functions
+def cartesian_product(lists):
+    if not lists: return [[]]
+    cp_result = []
+    combinations = cartesian_product(lists[1:])
+    for item in lists[0]:
+        for combination in combinations:
+            cp_result.append([item] + combination)
+    return cp_result
 def parse_network_file(filename):
-    variables_list.clear()
-    var_domains.clear()
-    parents.clear()
-    cpt.clear()
+    variable_names.clear()
+    variable_domains.clear()
+    variable_parents.clear()
+    cpts.clear()
 
-    lines = []
-    with open(filename, 'r') as f:
-        for line in f:
-            # Remove comments
-            idx = line.find('#')
-            if idx != -1:
-                line = line[:idx]
-            line = line.strip()
-            if line:
-                lines.append(line)
+    with open(filename, 'r') as file: cleaned_lines = [line.split('#')[0].strip() for line in file if line.strip()]
 
-    i = 0
-    num_vars = int(lines[i]); i+=1
-    for _ in range(num_vars):
-        parts = lines[i].split()
-        i+=1
-        var = parts[0]
-        dom = parts[1:]
-        variables_list.append(var)
-        var_domains[var] = dom
-        parents[var] = []
+    line_index = 1
+    number_of_variables = int(cleaned_lines[0])
 
-    num_cpts = int(lines[i]); i+=1
-    for _ in range(num_cpts):
-        cpt_line = lines[i].split()
-        i+=1
-        child = cpt_line[0]
-        if len(cpt_line) == 1:
-            parents[child] = []
+    for variable in range(number_of_variables):
+        split_line = cleaned_lines[line_index].split()
+        variable = split_line[0]
+        domain = split_line[1:]
+        variable_names.append(variable)
+        variable_domains[variable] = domain
+        variable_parents[variable] = []
+        line_index += 1
+
+    number_of_cpts = int(cleaned_lines[line_index])
+    line_index += 1
+
+    for cpt in range(number_of_cpts):
+        split_line = cleaned_lines[line_index].split()
+        child_variable = split_line[0]
+        parent_variables = split_line[1:]
+        variable_parents[child_variable] = parent_variables
+        cpts[child_variable] = {}
+        line_index += 1
+        if not parent_variables:
+            probabilities = [float(value) for value in cleaned_lines[line_index].split()]
+            cpts[child_variable][()] = probabilities
+            line_index += 1
         else:
-            parents[child] = cpt_line[1:]
-        cpt[child] = {}
-        if not parents[child]:
-            dist_line = lines[i].split()
-            i+=1
-            cpt[child][()] = list(map(float, dist_line))
-        else:
-            parent_combos = list(itertools.product(*[var_domains[p] for p in parents[child]]))
-            for combo in parent_combos:
-                dist_line = lines[i].split()
-                i+=1
-                cpt[child][combo] = list(map(float, dist_line))
-
-def prob_given_parents(variable, value, assignment):
-    par = parents[variable]
-    if not par:
-        dist = cpt[variable][()]
+            parent_domains = [variable_domains[parent] for parent in parent_variables]
+            parent_combinations = [tuple(combination) for combination in cartesian_product(parent_domains)]
+            for combination in parent_combinations:
+                probabilities = [float(value) for value in cleaned_lines[line_index].split()]
+                cpts[child_variable][combination] = probabilities
+                line_index += 1
+def probability_given_parents(variable, value, assignment):
+    if not variable_parents[variable]: distribution = cpts[variable][()]
     else:
-        pvals = tuple(assignment[p] for p in par)
-        dist = cpt[variable][pvals]
-    idx = var_domains[variable].index(value)
-    return dist[idx]
-
-def draw_from(domain, dist):
-    x = random.random()
-    s = 0
-    for val, pr in zip(domain, dist):
-        s += pr
-        if x <= s:
-            return val
+        parent_values = tuple(assignment[parent] for parent in variable_parents[variable])
+        distribution = cpts[variable][parent_values]
+    return distribution[variable_domains[variable].index(value)]
+def draw_value_from_distribution(domain, distribution):
+    random_value = random.random()
+    total = 0
+    for i in range(len(domain)):
+        value = domain[i]
+        probability = distribution[i]
+        total += probability
+        if random_value <= total: return value
     return domain[-1]
+def recursive_enumeration(remaining_variables, assignment):
+    if not remaining_variables: return 1.0
 
-def enumerate_all(vars_list, evidence):
-    if not vars_list:
-        return 1.0
-    cur = vars_list[0]
-    rest = vars_list[1:]
-    if cur in evidence:
-        p = prob_given_parents(cur, evidence[cur], evidence)
-        return p * enumerate_all(rest, evidence)
-    else:
-        total = 0
-        for val in var_domains[cur]:
-            evidence[cur] = val
-            p = prob_given_parents(cur, val, evidence)
-            total += p * enumerate_all(rest, evidence)
-        del evidence[cur]
-        return total
+    current = remaining_variables[0]
+    remaining = remaining_variables[1:]
 
-def xquery(query_var, evidence):
-    dist = []
-    dom = var_domains[query_var]
-    all_vars = variables_list[:]
-    for val in dom:
-        evidence[query_var] = val
-        p = enumerate_all(all_vars, evidence)
-        dist.append(p)
-    del evidence[query_var]
-    s = sum(dist)
-    if s == 0:
-        return [0.0]*len(dom)
-    return [p/s for p in dist]
+    if current in assignment:
+        prob = probability_given_parents(current, assignment[current], assignment)
+        return prob * recursive_enumeration(remaining, assignment)
 
-def prior_sample():
+    total_probability = 0
+    for value in variable_domains[current]:
+        new_evidence = assignment.copy()
+        new_evidence[current] = value
+        prob = probability_given_parents(current, value, new_evidence)
+        total_probability += prob * recursive_enumeration(remaining, new_evidence)
+    return total_probability
+def exact_query(target_variable, current_assignment):
+    result_distribution = []
+    query_domain = variable_domains[target_variable]
+
+    for value in query_domain:
+        extended_assignment = current_assignment.copy()
+        extended_assignment[target_variable] = value
+        probability = recursive_enumeration(variable_names[:], extended_assignment)
+        result_distribution.append(probability)
+
+    total = sum(result_distribution)
+    normalized_distribution = []
+
+    if total > 0:
+        for probability in result_distribution:
+            normalized_distribution.append(probability / total)
+    else: normalized_distribution = [0.0] * len(query_domain)
+
+    return normalized_distribution
+def generate_prior_sample():
     sample = {}
-    for var in variables_list:
-        if not parents[var]:
-            d = cpt[var][()]
+    for variable in variable_names:
+        if not variable_parents[variable]: distribution = cpts[variable][()]
         else:
-            parent_vals = tuple(sample[p] for p in parents[var])
-            d = cpt[var][parent_vals]
-        sample[var] = draw_from(var_domains[var], d)
+            parent_values = tuple(sample[parent] for parent in variable_parents[variable])
+            distribution = cpts[variable][parent_values]
+        sample[variable] = draw_value_from_distribution(variable_domains[variable], distribution)
     return sample
-
-def rquery(query_var, evidence, n=10000):
-    counts = {val:0 for val in var_domains[query_var]}
-    for _ in range(n):
-        s = prior_sample()
-        if all(s.get(evk)==evv for evk,evv in evidence.items()):
-            counts[s[query_var]] += 1
+def rejection_sampling(target_variable, given_assignment, sample_count):
+    value_counts = {value: 0 for value in variable_domains[target_variable]}
+    accepted_samples = 0
+    for i in range(sample_count):
+        sampled_assignment = generate_prior_sample()
+        matched = True
+        for variable in given_assignment:
+            if sampled_assignment.get(variable) != given_assignment[variable]:
+                matched = False
+                break
+        if matched:
+            observed_value = sampled_assignment[target_variable]
+            value_counts[observed_value] += 1
+            accepted_samples += 1
+    normalized_distribution = []
+    if accepted_samples > 0:
+        for value in variable_domains[target_variable]:
+            probability = value_counts[value] / accepted_samples
+            normalized_distribution.append(probability)
+    else: normalized_distribution = [0.0] * len(variable_domains[target_variable])
+    return normalized_distribution
+def gibbs_sampling(target_variable, assignment, sample_count, burn_in):
+    fixed_variables = assignment.keys()
+    sampled = [variable_name for variable_name in variable_names if variable_name not in fixed_variables]
+    current = assignment.copy()
+    for sample in sampled: current[sample] = random.choice(variable_domains[sample])
+    counts = {value: 0 for value in variable_domains[target_variable]}
+    for step in range(sample_count + burn_in):
+        for sample in sampled:
+            probabilities = []
+            for variable_domain in variable_domains[sample]:
+                current[sample] = variable_domain
+                probability = probability_given_parents(sample, variable_domain, current)
+                for child in variable_names:
+                    if sample in variable_parents[child]: probability *= probability_given_parents(child, current[child], current)
+                probabilities.append(probability)
+            total = 0
+            for probability in probabilities: total += probability
+            if total > 0: normalized = [p / total for p in probabilities]
+            else: normalized = [1 / len(probabilities)] * len(probabilities)
+            current[sample] = draw_value_from_distribution(variable_domains[sample], normalized)
+        if step >= burn_in:counts[current[target_variable]] += 1
     total = sum(counts.values())
-    if total==0:
-        return [0.0]*len(counts)
-    return [counts[val]/total for val in var_domains[query_var]]
+    if total == 0: return [0.0] * len(counts)
+    return [counts[val] / total for val in variable_domains[target_variable]]
 
-def gquery(query_var, evidence, n=10000, burn_in=1000):
-    evars = set(evidence.keys())
-    non_evars = [v for v in variables_list if v not in evars]
-    assignment = {}
-    for var in variables_list:
-        if var in evidence:
-            assignment[var] = evidence[var]
-        else:
-            assignment[var] = random.choice(var_domains[var])
-    counts = {val:0 for val in var_domains[query_var]}
-    for i in range(n+burn_in):
-        for z in non_evars:
-            domain_z = var_domains[z]
-            pvals = []
-            for cand_val in domain_z:
-                assignment[z] = cand_val
-                pz = prob_given_parents(z, cand_val, assignment)
-                child_factor = 1.0
-                for w in variables_list:
-                    if z in parents[w]:
-                        child_val = assignment[w]
-                        child_factor *= prob_given_parents(w, child_val, assignment)
-                pvals.append(pz*child_factor)
-            s = sum(pvals)
-            if s==0:
-                pvals = [1.0/len(domain_z)]*len(domain_z)
-            else:
-                pvals = [pp/s for pp in pvals]
-            chosen = draw_from(domain_z, pvals)
-            assignment[z] = chosen
-        if i>=burn_in:
-            counts[assignment[query_var]]+=1
-    tot = sum(counts.values())
-    if tot==0:
-        return [0.0]*len(counts)
-    return [counts[val]/tot for val in var_domains[query_var]]
-
-def main():
-    random.seed(0)
-    bn_loaded=False
-
-    for line in sys.stdin:
-        line=line.strip()
-        if not line:
-            continue
-        if line.lower() in ["quit","exit"]:
-            break
-
-        tokens=line.split()
-        cmd = tokens[0].lower()
-
-        if cmd=="load":
-            if len(tokens)>1:
-                fname=tokens[1]
-                try:
-                    parse_network_file(fname)
-                    bn_loaded=True
-                except:
-                    pass
-
-        elif cmd in ["xquery","rquery","gquery"]:
-            if not bn_loaded:
-                continue
-            parts=line.split("|")
-            left=parts[0].strip()
-            right=parts[1].strip() if len(parts)>1 else ""
-            ltoks=left.split()
-            if len(ltoks)<2:
-                continue
-            qvar=ltoks[1]
-            evidence={}
-            if right:
-                evtokens=right.split()
-                for ev in evtokens:
-                    if "=" in ev:
-                        k,v=ev.split("=")
-                        evidence[k]=v
-            if cmd=="xquery":
-                dist=xquery(qvar,evidence)
-            elif cmd=="rquery":
-                dist=rquery(qvar,evidence,10000)
-            else:
-                dist=gquery(qvar,evidence,10000,1000)
-
-            print(" ".join(f"{p:.4f}" for p in dist))
-
-if __name__=="__main__":
-    main()
+# Main
+random.seed(0)
+network_loaded = False
+for input_line in sys.stdin:
+    input_line = input_line.strip()
+    if not input_line or input_line.lower() in ["quit", "exit"]: break
+    split_input = input_line.split()
+    command = split_input[0].lower()
+    if command == "load" and len(split_input) > 1:
+        parse_network_file(split_input[1])
+        network_loaded = True
+    elif command in ["xquery", "rquery", "gquery"] and network_loaded:
+        parts = input_line.split("|")
+        query_variable = parts[0].split()[1]
+        variable_conditions = dict(part.split("=") for part in parts[1].split()) if len(parts) > 1 else {}
+        if command == "xquery": result = exact_query(query_variable, variable_conditions)
+        elif command == "rquery": result = rejection_sampling(query_variable, variable_conditions, 2400)
+        else: result = gibbs_sampling(query_variable, variable_conditions, 1200, 120)
+        print(" ".join(f"{p:.4f}" for p in result))
